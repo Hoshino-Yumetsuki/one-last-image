@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "Read(//c/Users/Q78KG/.cargo/registry/src/mirrors.ustc.edu.cn-38d0e5eb5da2abae/conv-0.3.3/src/**)",
+      "Bash(cargo check)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

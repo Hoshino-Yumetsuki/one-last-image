@@ -1,0 +1,58 @@
+{
+  "name": "koishi-plugin-one-last-image",
+  "description": "One Last Image plugin for koishi",
+  "version": "1.0.0",
+  "main": "lib/index.cjs",
+  "module": "lib/index.mjs",
+  "types": "lib/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "require": "./lib/index.cjs",
+      "import": "./lib/index.mjs"
+    },
+    "./lib": {
+      "types": "./lib/lib.d.ts",
+      "require": "./lib/lib.cjs",
+      "import": "./lib/lib.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "yarn sync-wasm && yarn rolldown -c rolldown.config.js",
+    "sync-wasm": "node scripts/sync-wasm-bindings.js",
+    "publish": "yarn npm publish",
+    "lint": "biome check && biome lint",
+    "lint-fix": "biome format --write && biome lint --write"
+  },
+  "license": "MPL-2.0",
+  "homepage": "https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image"
+  },
+  "keywords": [
+    "koishi",
+    "plugin",
+    "one-last-image"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.17.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.6",
+    "@types/node": "^24.7.2",
+    "koishi": "^4.18.9",
+    "rolldown": "1.0.0-beta.43",
+    "rolldown-plugin-dts": "^0.16.11"
+  },
+  "koishi": {
+    "description": {
+      "zh": "One Last Image - 将图片转换为线稿效果"
+    }
+  }
+}
