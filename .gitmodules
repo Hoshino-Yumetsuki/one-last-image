@@ -1,0 +1,3 @@
+[submodule "one-last-image"]
+	path = one-last-image
+	url = https://github.com/itorr/one-last-image.git
