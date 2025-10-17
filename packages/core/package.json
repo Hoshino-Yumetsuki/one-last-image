@@ -52,7 +52,7 @@
   },
   "koishi": {
     "description": {
-      "zh": "One Last Image - 将图片转换为线稿效果"
+      "zh": "One Last Image 线稿效果生成器"
     }
   }
 }
