@@ -52,6 +52,8 @@ export function apply(ctx: Context, config: Config) {
           }
 
           if (i) return i.attrs.src
+          // 如果用户发送了消息但不是图片,返回特殊标记取消操作
+          if (s.elements.length > 0) return 'CANCEL'
           return null
         },
         { timeout: 30 * 1000 }
@@ -59,6 +61,10 @@ export function apply(ctx: Context, config: Config) {
 
       if (!imageUrl) {
         return '等待图片超时，已取消操作'
+      }
+
+      if (imageUrl === 'CANCEL') {
+        return '未检测到图片，已取消操作'
       }
 
       img = { attrs: { src: imageUrl } as any } as any
