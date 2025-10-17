@@ -30,7 +30,38 @@ export function apply(ctx: Context, config: Config) {
     }
 
     if (!img) {
-      return '请发送要处理的图片~'
+      // 当用户单独触发命令但未提供图片时，提示并通过 session.prompt 等待用户发送图片（最长 30 秒）
+      await session.send('请发送要处理的图片，等待 30 秒...')
+
+      const imageUrl = await session.prompt(
+        async (s) => {
+          // 仅接受来自同一用户和频道的输入
+          if (s.userId !== session.userId || s.channelId !== session.channelId)
+            return null
+
+          let [i] = h.select(s.elements, 'img')
+          if (!i && s.quote) {
+            const qImg = h
+              .select(s.quote.content, 'img')
+              .map((item) => item.attrs.src)[0]
+            const qFace = h
+              .select(s.quote.content, 'mface')
+              .map((item) => item.attrs.url)[0]
+            const src = qImg || qFace
+            if (src) i = { attrs: { src } as any } as any
+          }
+
+          if (i) return i.attrs.src
+          return null
+        },
+        { timeout: 30 * 1000 }
+      )
+
+      if (!imageUrl) {
+        return '等待图片超时，已取消操作'
+      }
+
+      img = { attrs: { src: imageUrl } as any } as any
     }
 
     const imageUrl = img.attrs.src
