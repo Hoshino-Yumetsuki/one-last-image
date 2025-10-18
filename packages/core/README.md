@@ -1,4 +1,4 @@
-# koishi-plugin-one-last-image
+# koishi-plugin-one-last-image / one-last-image
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-one-last-image?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-one-last-image)
 [![License](https://img.shields.io/github/license/Hoshino-Yumetsuki/koishi-plugin-one-last-image?style=flat-square)](https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image/blob/main/LICENSE)
@@ -23,13 +23,13 @@ One Last Image 线稿效果生成器 - 将图片转换为精美的线稿风格
 
 ```bash
 # 使用 npm
-npm install koishi-plugin-one-last-image
+npm install one-last-image
 
 # 使用 yarn
-yarn add koishi-plugin-one-last-image
+yarn add one-last-image
 
 # 使用 pnpm
-pnpm add koishi-plugin-one-last-image
+pnpm add one-last-image
 ```
 
 ## 使用方法
