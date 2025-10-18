@@ -1,5 +1,5 @@
-use wasm_bindgen::prelude::*;
 use serde::Deserialize;
+use wasm_bindgen::prelude::*;
 
 mod utils;
 
@@ -21,25 +21,21 @@ pub struct OLIConfig {
     pub hajimei: Option<bool>,
     pub tone_count: Option<u8>,
     pub light: Option<f32>,
+    // base64-encoded pencil texture image data (no data:* prefix)
+    pub pencil_texture: Option<String>,
 }
 
-// One Last Image 主函数 - 将图片转换为线稿效果，支持传入 JSON 配置
+// One Last Image 主函数 - 将图片转换为线稿效果
+// config_json 为可选参数，传入空字符串或无效JSON时使用默认配置
 #[wasm_bindgen]
-pub fn one_last_image_with_config(input: &[u8], config_json: &str) -> Vec<u8> {
-    let config: Result<OLIConfig, _> = serde_json::from_str(config_json);
-    match config {
-        Ok(cfg) => utils::image_processing::one_last_image_with_config(input, Some(cfg)),
-        Err(_) => utils::image_processing::one_last_image_with_config(input, None),
-    }
-}
+pub fn one_last_image(input: &[u8], config_json: Option<String>) -> Vec<u8> {
+    let config = config_json.and_then(|s| {
+        if s.is_empty() {
+            None
+        } else {
+            serde_json::from_str::<OLIConfig>(&s).ok()
+        }
+    });
 
-// 兼容老接口（不带配置）
-#[wasm_bindgen]
-pub fn one_last_image(input: &[u8]) -> Vec<u8> {
-    utils::image_processing::one_last_image_with_config(input, None)
+    utils::image_processing::one_last_image_with_config(input, config)
 }
-
-//#[wasm_bindgen]
-//pub fn detect_mime(input: &[u8]) -> String {
-//    utils::mime::detect_mime(input)
-//}

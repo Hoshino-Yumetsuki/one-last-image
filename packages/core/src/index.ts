@@ -1,19 +1,19 @@
-import { type Context, h, Logger } from 'koishi'
+import { type Context, h, type Logger } from 'koishi'
 import type Config from './config'
-import { createLogger, setLoggerLevel } from './utils/logger'
 import { processOneLastImage } from './utils/imageProcessing'
 // inlined watermark asset (data:<mime>;base64,...) provided by rolldown
 //@ts-expect-error
 import logoDataUri from './assets/one-last-image-logo2.png'
+//@ts-expect-error
+import pencilTextureUri from './assets/pencil-texture.jpg'
 
 export let logger: Logger
 
 export function apply(ctx: Context, config: Config) {
-  logger = createLogger(ctx)
-  setupLogger(config)
-
-  ctx.command('oli', 'One Last Image 图片处理').action(async ({ session }) => {
-    // 获取用户消息中的图片（优先元素中的 img, 若没有则尝试引用内容或 mface）
+  ctx
+    .command('oli', 'One Last Image 图片处理')
+    .option('watermark', '-w [enable:boolean] 是否添加水印（默认使用配置）')
+    .action(async ({ session, options }) => {
     let [img] = h.select(session.elements, 'img')
 
     if (!img && session.quote) {
@@ -30,12 +30,10 @@ export function apply(ctx: Context, config: Config) {
     }
 
     if (!img) {
-      // 当用户单独触发命令但未提供图片时，提示并通过 session.prompt 等待用户发送图片（最长 30 秒）
-      await session.send('请发送要处理的图片，等待 30 秒...')
+      await session.send(`请发送要处理的图片，等待 ${config.timeout} 秒...`)
 
       const imageUrl = await session.prompt(
         async (s) => {
-          // 仅接受来自同一用户和频道的输入
           if (s.userId !== session.userId || s.channelId !== session.channelId)
             return null
 
@@ -52,11 +50,10 @@ export function apply(ctx: Context, config: Config) {
           }
 
           if (i) return i.attrs.src
-          // 如果用户发送了消息但不是图片,返回特殊标记取消操作
           if (s.elements.length > 0) return 'CANCEL'
           return null
         },
-        { timeout: 30 * 1000 }
+        { timeout: config.timeout * 1000 }
       )
 
       if (!imageUrl) {
@@ -73,14 +70,15 @@ export function apply(ctx: Context, config: Config) {
     const imageUrl = img.attrs.src
 
     try {
-      // 获取图片数据
       const imageBuffer = Buffer.from(
         await ctx.http.get(imageUrl, {
           responseType: 'arraybuffer'
         })
       )
 
-      // 构建传入图像处理的配置（将 camelCase 转为 snake_case 以匹配 Rust 端）
+      // 水印配置：优先使用命令选项，否则使用配置文件
+      const useWatermark = options.watermark !== undefined ? options.watermark : config.watermark
+
       const cfg: Record<string, any> = {
         zoom: config.zoom,
         cover: config.cover,
@@ -92,22 +90,26 @@ export function apply(ctx: Context, config: Config) {
         shade_limit: config.shadeLimit,
         shade_light: config.shadeLight,
         kiss: config.kiss,
-        watermark: config.watermark,
+        watermark: useWatermark,
         hajimei: config.hajimei
       }
 
-      // 如果启用了 watermark，提取 data URI 的 base64 部分并传入 wasm
-      if (config.watermark && typeof logoDataUri === 'string') {
+      if (useWatermark && typeof logoDataUri === 'string') {
         const parts = logoDataUri.split(',')
         if (parts.length === 2) {
           cfg.watermark_image = parts[1]
         }
       }
 
-      // 处理图片 - 使用 one-last-image 线稿效果，并传递配置
+      if (config.shade && typeof pencilTextureUri === 'string') {
+        const parts = pencilTextureUri.split(',')
+        if (parts.length === 2) {
+          cfg.pencil_texture = parts[1]
+        }
+      }
+
       const processedBuffer = await processOneLastImage(imageBuffer, cfg)
 
-      // 发送处理后的图片
       await session.send(h.image(processedBuffer, 'image/png'))
 
       return
@@ -116,12 +118,6 @@ export function apply(ctx: Context, config: Config) {
       return '图片处理失败了喵~'
     }
   })
-}
-
-function setupLogger(config: Config) {
-  if (config.isLog) {
-    setLoggerLevel(Logger.DEBUG)
-  }
 }
 
 export * from './config'

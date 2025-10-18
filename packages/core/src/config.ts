@@ -1,7 +1,7 @@
 import { Schema } from 'koishi'
 
 export interface Config {
-  isLog: boolean
+  timeout: number
   zoom: number
   cover: boolean
   quality:
@@ -28,6 +28,13 @@ export interface Config {
 export const Config: Schema<Config> = Schema.intersect([
   // 基础设置
   Schema.object({
+    timeout: Schema.number()
+      .default(30)
+      .description('图片接受超时时间（秒）')
+      .min(5)
+      .max(120)
+      .step(1),
+
     zoom: Schema.number()
       .default(1)
       .description('缩放比例')
@@ -58,33 +65,33 @@ export const Config: Schema<Config> = Schema.intersect([
   // 线迹设置
   Schema.object({
     lightCut: Schema.number()
-      .default(30)
+      .default(128)
       .description('线迹轻重 - 浅色截断值')
       .min(0)
-      .max(128)
+      .max(255)
       .step(1),
 
     darkCut: Schema.number()
-      .default(30)
+      .default(118)
       .description('线迹轻重 - 深色截断值')
       .min(0)
-      .max(128)
+      .max(255)
       .step(1)
   }).description('线迹设置'),
 
   // 调子设置
   Schema.object({
-    shade: Schema.boolean().default(false).description('是否启用阴影效果'),
+    shade: Schema.boolean().default(true).description('是否启用阴影效果'),
 
     shadeLimit: Schema.number()
-      .default(80)
+      .default(108)
       .description('调子阈值')
       .min(0)
       .max(255)
       .step(1),
 
     shadeLight: Schema.number()
-      .default(40)
+      .default(80)
       .description('调子轻重')
       .min(0)
       .max(255)
@@ -108,21 +115,16 @@ export const Config: Schema<Config> = Schema.intersect([
   // Kiss 效果
   Schema.object({
     kiss: Schema.boolean()
-      .default(false)
+      .default(true)
       .description('是否启用 Kiss 彩色渐变效果')
   }).description('Kiss 效果'),
 
   // 水印设置
   Schema.object({
-    watermark: Schema.boolean().default(false).description('是否添加水印'),
+    watermark: Schema.boolean().default(true).description('是否添加水印'),
 
     hajimei: Schema.boolean().default(false).description('是否使用初回样式水印')
-  }).description('水印设置'),
-
-  // 日志设置
-  Schema.object({
-    isLog: Schema.boolean().default(false).description('是否输出debug日志')
-  }).description('日志设置')
+  }).description('水印设置')
 ])
 
 export const name = 'one-last-image'
