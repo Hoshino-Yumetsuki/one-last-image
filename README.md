@@ -1,1 +1,1 @@
-# koishi-plugin-one-last-image
+packages/core/README.md
