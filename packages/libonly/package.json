@@ -1,0 +1,44 @@
+{
+  "name": "one-last-image",
+  "description": "One Last Image",
+  "version": "1.0.0",
+  "main": "lib/index.cjs",
+  "module": "lib/index.mjs",
+  "types": "lib/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "require": "./lib/index.cjs",
+      "import": "./lib/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "yarn rolldown -c rolldown.config.js",
+    "publish": "yarn npm publish",
+    "lint": "biome check && biome lint",
+    "lint-fix": "biome format --write && biome lint --write"
+  },
+  "license": "MPL-2.0",
+  "homepage": "https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image"
+  },
+  "keywords": [
+    "one-last-image"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.6",
+    "@types/node": "^24.7.2",
+    "rolldown": "1.0.0-beta.43",
+    "rolldown-plugin-dts": "^0.16.11"
+  },
+  "dependencies": {
+    "koishi-plugin-one-last-image": "^1.0.0"
+  }
+}

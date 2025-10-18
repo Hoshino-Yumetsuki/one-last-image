@@ -1,0 +1,1 @@
+export * from "koishi-plugin-one-last-image/lib";
