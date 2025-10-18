@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "build": "yarn rolldown -c rolldown.config.js",
+    "test": "node test/test.js",
     "publish": "yarn npm publish",
     "lint": "biome check && biome lint",
     "lint-fix": "biome format --write && biome lint --write"

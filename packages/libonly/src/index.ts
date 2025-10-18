@@ -1,1 +1,1 @@
-export * from "koishi-plugin-one-last-image/lib";
+export * from 'koishi-plugin-one-last-image/lib'
