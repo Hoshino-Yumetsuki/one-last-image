@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-one-last-image",
   "description": "One Last Image plugin for koishi",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "lib/index.cjs",
   "module": "lib/index.mjs",
   "types": "lib/index.d.ts",
@@ -30,10 +30,10 @@
     "lint-fix": "biome format --write && biome lint --write"
   },
   "license": "MPL-2.0",
-  "homepage": "https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image",
+  "homepage": "https://github.com/Hoshino-Yumetsuki/one-last-image",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Hoshino-Yumetsuki/koishi-plugin-one-last-image"
+    "url": "git+https://github.com/Hoshino-Yumetsuki/one-last-image"
   },
   "keywords": [
     "koishi",
