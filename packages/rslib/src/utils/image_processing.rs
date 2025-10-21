@@ -42,6 +42,47 @@ fn convolve_y(pixels: &[u8], width: u32, height: u32, kernel: &[f32]) -> Vec<u8>
     output
 }
 
+// 生成高斯卷积核
+fn gaussian_kernel(size: usize, sigma: f32) -> Vec<f32> {
+    let half = (size / 2) as i32;
+    let mut kernel = vec![0.0; size * size];
+    let mut sum = 0.0;
+    
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as i32 - half;
+            let dy = y as i32 - half;
+            let value = (-((dx * dx + dy * dy) as f32) / (2.0 * sigma * sigma)).exp();
+            kernel[y * size + x] = value;
+            sum += value;
+        }
+    }
+    
+    // 归一化
+    for val in kernel.iter_mut() {
+        *val /= sum;
+    }
+    
+    kernel
+}
+
+// Unsharp Mask 锐化
+fn unsharp_mask(pixels: &[u8], width: u32, height: u32, amount: f32, radius: f32) -> Vec<u8> {
+    // 使用高斯模糊
+    let kernel = gaussian_kernel(5, radius);
+    let blurred = convolve_y(pixels, width, height, &kernel);
+    
+    let mut output = vec![0u8; (width * height) as usize];
+    for i in 0..output.len() {
+        let original = pixels[i] as f32;
+        let blur = blurred[i] as f32;
+        let sharpened = original + amount * (original - blur);
+        output[i] = sharpened.clamp(0.0, 255.0) as u8;
+    }
+    
+    output
+}
+
 // 获取卷积核
 fn get_kernel(quality: &str) -> Option<Vec<f32>> {
     match quality {
@@ -102,9 +143,9 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         width = 1920;
     }
 
-    // 缩放图片
+    // 缩放图片 - 使用Lanczos3获得更锐利的边缘
     let resized =
-        image::imageops::resize(&img, width, height, image::imageops::FilterType::Triangle);
+        image::imageops::resize(&img, width, height, image::imageops::FilterType::Lanczos3);
 
     // 1. 转灰度
     let mut gray = vec![0u8; (width * height) as usize];
@@ -127,9 +168,9 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 3. 去噪
+    // 3. 去噪 - 使用高斯滤波保留更多边缘细节
     if denoise {
-        let kernel = vec![1.0 / 9.0; 9];
+        let kernel = gaussian_kernel(3, 0.8);
         gray = convolve_y(&gray, width, height, &kernel);
     }
 
@@ -159,31 +200,9 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 6. 缩小放大平滑
-    let small_w = (width as f32 / 1.4).floor() as u32;
-    let small_h = (height as f32 / 1.3).floor() as u32;
-
-    let small_img = ImageBuffer::from_fn(small_w, small_h, |x, y| {
-        let src_x = (x as f32 * width as f32 / small_w as f32) as u32;
-        let src_y = (y as f32 * height as f32 / small_h as f32) as u32;
-        let idx = (src_y * width + src_x) as usize;
-        let val = processed[idx];
-        Rgba([val, val, val, 255])
-    });
-
-    let smoothed_img = image::imageops::resize(
-        &small_img,
-        width,
-        height,
-        image::imageops::FilterType::Triangle,
-    );
-
-    for y in 0..height {
-        for x in 0..width {
-            let val = smoothed_img.get_pixel(x, y)[0];
-            processed[(y * width + x) as usize] = val;
-        }
-    }
+    // 6. 锐化边缘 - 使用Unsharp Mask增强边缘对比度
+    // amount: 锐化强度, radius: 锐化半径
+    processed = unsharp_mask(&processed, width, height, 1.5, 1.0);
 
     // 7. 生成最终RGBA图像
     let mut rgba = RgbaImage::new(width, height);
@@ -293,7 +312,7 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
                             &wm_cropped,
                             set_width,
                             set_height,
-                            image::imageops::FilterType::Triangle,
+                            image::imageops::FilterType::Lanczos3,
                         );
                         let start_x =
                             width.saturating_sub(set_width + (set_height as f32 * 0.2) as u32);
