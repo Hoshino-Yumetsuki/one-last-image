@@ -1,7 +1,7 @@
 use base64::Engine;
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ColorType, DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
+use image::{ColorType, DynamicImage, GenericImageView, Rgba, RgbaImage};
 
 fn load_image(input: &[u8]) -> Option<DynamicImage> {
     image::load_from_memory(input).ok()
