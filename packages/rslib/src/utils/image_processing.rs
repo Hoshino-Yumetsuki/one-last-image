@@ -47,7 +47,7 @@ fn gaussian_kernel(size: usize, sigma: f32) -> Vec<f32> {
     let half = (size / 2) as i32;
     let mut kernel = vec![0.0; size * size];
     let mut sum = 0.0;
-    
+
     for y in 0..size {
         for x in 0..size {
             let dx = x as i32 - half;
@@ -57,12 +57,12 @@ fn gaussian_kernel(size: usize, sigma: f32) -> Vec<f32> {
             sum += value;
         }
     }
-    
+
     // 归一化
     for val in kernel.iter_mut() {
         *val /= sum;
     }
-    
+
     kernel
 }
 
@@ -71,7 +71,7 @@ fn unsharp_mask(pixels: &[u8], width: u32, height: u32, amount: f32, radius: f32
     // 使用高斯模糊
     let kernel = gaussian_kernel(5, radius);
     let blurred = convolve_y(pixels, width, height, &kernel);
-    
+
     let mut output = vec![0u8; (width * height) as usize];
     for i in 0..output.len() {
         let original = pixels[i] as f32;
@@ -79,8 +79,45 @@ fn unsharp_mask(pixels: &[u8], width: u32, height: u32, amount: f32, radius: f32
         let sharpened = original + amount * (original - blur);
         output[i] = sharpened.clamp(0.0, 255.0) as u8;
     }
-    
+
     output
+}
+
+// 线性插值
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+// 从渐变色表中获取颜色
+fn get_gradient_color(t: f32) -> (u8, u8, u8) {
+    // 渐变色停靠点: (位置, R, G, B)
+    const GRADIENT_STOPS: [(f32, f32, f32, f32); 6] = [
+        (0.0, 251.0, 186.0, 48.0),
+        (0.4, 252.0, 114.0, 53.0),
+        (0.6, 252.0, 53.0, 78.0),
+        (0.7, 207.0, 54.0, 223.0),
+        (0.8, 55.0, 181.0, 217.0),
+        (1.0, 62.0, 182.0, 218.0),
+    ];
+
+    // 找到t所在的区间并插值
+    for i in 0..GRADIENT_STOPS.len() - 1 {
+        let (pos1, r1, g1, b1) = GRADIENT_STOPS[i];
+        let (pos2, r2, g2, b2) = GRADIENT_STOPS[i + 1];
+
+        if t <= pos2 {
+            let local_t = (t - pos1) / (pos2 - pos1);
+            return (
+                lerp(r1, r2, local_t) as u8,
+                lerp(g1, g2, local_t) as u8,
+                lerp(b1, b2, local_t) as u8,
+            );
+        }
+    }
+
+    // 超出范围则返回最后一个颜色
+    let (_, r, g, b) = GRADIENT_STOPS[GRADIENT_STOPS.len() - 1];
+    (r as u8, g as u8, b as u8)
 }
 
 // 获取卷积核
@@ -216,38 +253,8 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
                 // 计算渐变位置
                 let t = ((x as f32 + y as f32) / (width as f32 + height as f32)).min(1.0);
 
-                // 渐变颜色（简化版：直接线性插值）
-                let (r, g, b) = if t < 0.4 {
-                    let local_t = t / 0.4;
-                    let r = (251.0 * (1.0 - local_t) + 252.0 * local_t) as u8;
-                    let g = (186.0 * (1.0 - local_t) + 114.0 * local_t) as u8;
-                    let b = (48.0 * (1.0 - local_t) + 53.0 * local_t) as u8;
-                    (r, g, b)
-                } else if t < 0.6 {
-                    let local_t = (t - 0.4) / 0.2;
-                    let r = (252.0 * (1.0 - local_t) + 252.0 * local_t) as u8;
-                    let g = (114.0 * (1.0 - local_t) + 53.0 * local_t) as u8;
-                    let b = (53.0 * (1.0 - local_t) + 78.0 * local_t) as u8;
-                    (r, g, b)
-                } else if t < 0.7 {
-                    let local_t = (t - 0.6) / 0.1;
-                    let r = (252.0 * (1.0 - local_t) + 207.0 * local_t) as u8;
-                    let g = (53.0 * (1.0 - local_t) + 54.0 * local_t) as u8;
-                    let b = (78.0 * (1.0 - local_t) + 223.0 * local_t) as u8;
-                    (r, g, b)
-                } else if t < 0.8 {
-                    let local_t = (t - 0.7) / 0.1;
-                    let r = (207.0 * (1.0 - local_t) + 55.0 * local_t) as u8;
-                    let g = (54.0 * (1.0 - local_t) + 181.0 * local_t) as u8;
-                    let b = (223.0 * (1.0 - local_t) + 217.0 * local_t) as u8;
-                    (r, g, b)
-                } else {
-                    let local_t = (t - 0.8) / 0.2;
-                    let r = (55.0 * (1.0 - local_t) + 62.0 * local_t) as u8;
-                    let g = (181.0 * (1.0 - local_t) + 182.0 * local_t) as u8;
-                    let b = (217.0 * (1.0 - local_t) + 218.0 * local_t) as u8;
-                    (r, g, b)
-                };
+                // 从渐变色表获取颜色
+                let (r, g, b) = get_gradient_color(t);
 
                 // alpha = 255 - y（越暗越不透明）
                 let alpha = (255.0 - val as f32) as u8;
