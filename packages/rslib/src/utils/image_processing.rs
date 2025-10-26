@@ -2,6 +2,7 @@ use base64::Engine;
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ColorType, DynamicImage, GenericImageView, Rgba, RgbaImage};
+use ndarray::Array2;
 
 fn load_image(input: &[u8]) -> Option<DynamicImage> {
     image::load_from_memory(input).ok()
@@ -18,22 +19,24 @@ fn encode_png(rgba: &RgbaImage) -> Option<Vec<u8>> {
     }
 }
 
-// 简单的卷积函数（只处理Y通道）
-fn convolve_y(pixels: &[u8], width: u32, height: u32, kernel: &[f32]) -> Vec<u8> {
-    let side = (kernel.len() as f32).sqrt() as usize;
-    let half = side / 2;
+// 使用ndarray进行卷积运算
+fn convolve_ndarray(pixels: &[u8], width: u32, height: u32, kernel: &Array2<f32>) -> Vec<u8> {
+    let (kh, kw) = kernel.dim();
+    let half_h = kh / 2;
+    let half_w = kw / 2;
     let mut output = vec![0u8; (width * height) as usize];
 
     for y in 0..height {
         for x in 0..width {
             let mut sum = 0.0;
-            for ky in 0..side {
-                for kx in 0..side {
+            for ky in 0..kh {
+                for kx in 0..kw {
                     let py =
-                        (y as i32 + ky as i32 - half as i32).clamp(0, height as i32 - 1) as u32;
-                    let px = (x as i32 + kx as i32 - half as i32).clamp(0, width as i32 - 1) as u32;
+                        (y as i32 + ky as i32 - half_h as i32).clamp(0, height as i32 - 1) as u32;
+                    let px =
+                        (x as i32 + kx as i32 - half_w as i32).clamp(0, width as i32 - 1) as u32;
                     let idx = (py * width + px) as usize;
-                    sum += pixels[idx] as f32 * kernel[ky * side + kx];
+                    sum += pixels[idx] as f32 * kernel[[ky, kx]];
                 }
             }
             output[(y * width + x) as usize] = sum.clamp(0.0, 255.0) as u8;
@@ -42,10 +45,17 @@ fn convolve_y(pixels: &[u8], width: u32, height: u32, kernel: &[f32]) -> Vec<u8>
     output
 }
 
-// 生成高斯卷积核
-fn gaussian_kernel(size: usize, sigma: f32) -> Vec<f32> {
+// 简单的卷积函数（兼容旧代码）
+fn convolve_y(pixels: &[u8], width: u32, height: u32, kernel: &[f32]) -> Vec<u8> {
+    let side = (kernel.len() as f32).sqrt() as usize;
+    let kernel_array = Array2::from_shape_vec((side, side), kernel.to_vec()).unwrap();
+    convolve_ndarray(pixels, width, height, &kernel_array)
+}
+
+// 使用ndarray生成高斯卷积核
+fn gaussian_kernel_ndarray(size: usize, sigma: f32) -> Array2<f32> {
     let half = (size / 2) as i32;
-    let mut kernel = vec![0.0; size * size];
+    let mut kernel = Array2::zeros((size, size));
     let mut sum = 0.0;
 
     for y in 0..size {
@@ -53,24 +63,54 @@ fn gaussian_kernel(size: usize, sigma: f32) -> Vec<f32> {
             let dx = x as i32 - half;
             let dy = y as i32 - half;
             let value = (-((dx * dx + dy * dy) as f32) / (2.0 * sigma * sigma)).exp();
-            kernel[y * size + x] = value;
+            kernel[[y, x]] = value;
             sum += value;
         }
     }
 
     // 归一化
-    for val in kernel.iter_mut() {
-        *val /= sum;
-    }
+    kernel / sum
+}
 
+// 动态生成Sobel算子 - Sobel = 高斯平滑 ⊗ 差分
+// Sobel算子是[1,2,1]^T（高斯平滑）和[-1,0,1]（差分）的外积
+fn sobel_x_kernel() -> Array2<f32> {
+    // 高斯平滑向量（垂直方向）
+    let smooth = Array2::from_shape_vec((3, 1), vec![1.0, 2.0, 1.0]).unwrap();
+    // 差分向量（水平方向）
+    let diff = Array2::from_shape_vec((1, 3), vec![-1.0, 0.0, 1.0]).unwrap();
+
+    // 外积生成Sobel X算子
+    let mut kernel = Array2::zeros((3, 3));
+    for i in 0..3 {
+        for j in 0..3 {
+            kernel[[i, j]] = smooth[[i, 0]] * diff[[0, j]];
+        }
+    }
     kernel
 }
 
-// Unsharp Mask 锐化
+fn sobel_y_kernel() -> Array2<f32> {
+    // 差分向量（垂直方向）
+    let diff = Array2::from_shape_vec((3, 1), vec![-1.0, 0.0, 1.0]).unwrap();
+    // 高斯平滑向量（水平方向）
+    let smooth = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 1.0]).unwrap();
+
+    // 外积生成Sobel Y算子
+    let mut kernel = Array2::zeros((3, 3));
+    for i in 0..3 {
+        for j in 0..3 {
+            kernel[[i, j]] = diff[[i, 0]] * smooth[[0, j]];
+        }
+    }
+    kernel
+}
+
+// Unsharp Mask 锐化（使用ndarray）
 fn unsharp_mask(pixels: &[u8], width: u32, height: u32, amount: f32, radius: f32) -> Vec<u8> {
     // 使用高斯模糊
-    let kernel = gaussian_kernel(5, radius);
-    let blurred = convolve_y(pixels, width, height, &kernel);
+    let kernel = gaussian_kernel_ndarray(5, radius);
+    let blurred = convolve_ndarray(pixels, width, height, &kernel);
 
     let mut output = vec![0u8; (width * height) as usize];
     for i in 0..output.len() {
@@ -88,86 +128,150 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-// 从渐变色表中获取颜色
+// 渐变色停靠点
+const ORIGINAL_GRADIENT_STOPS: [(f32, u8, u8, u8); 6] = [
+    (0.0, 251, 186, 48), // 橙黄色
+    (0.4, 252, 114, 53), // 橙红色
+    (0.6, 252, 53, 78),  // 粉红色
+    (0.7, 207, 54, 223), // 紫红色
+    (0.8, 55, 181, 217), // 青蓝色
+    (1.0, 62, 182, 218), // 青蓝色
+];
+
+// 从原始渐变色表中获取颜色（使用线性插值）
 fn get_gradient_color(t: f32) -> (u8, u8, u8) {
-    // 渐变色停靠点: (位置, R, G, B)
-    const GRADIENT_STOPS: [(f32, f32, f32, f32); 6] = [
-        (0.0, 251.0, 186.0, 48.0),
-        (0.4, 252.0, 114.0, 53.0),
-        (0.6, 252.0, 53.0, 78.0),
-        (0.7, 207.0, 54.0, 223.0),
-        (0.8, 55.0, 181.0, 217.0),
-        (1.0, 62.0, 182.0, 218.0),
-    ];
+    let clamped_t = t.clamp(0.0, 1.0);
 
     // 找到t所在的区间并插值
-    for i in 0..GRADIENT_STOPS.len() - 1 {
-        let (pos1, r1, g1, b1) = GRADIENT_STOPS[i];
-        let (pos2, r2, g2, b2) = GRADIENT_STOPS[i + 1];
+    for i in 0..(ORIGINAL_GRADIENT_STOPS.len() - 1) {
+        let (pos1, r1, g1, b1) = ORIGINAL_GRADIENT_STOPS[i];
+        let (pos2, r2, g2, b2) = ORIGINAL_GRADIENT_STOPS[i + 1];
 
-        if t <= pos2 {
-            let local_t = (t - pos1) / (pos2 - pos1);
+        if clamped_t <= pos2 {
+            let local_t = (clamped_t - pos1) / (pos2 - pos1);
             return (
-                lerp(r1, r2, local_t) as u8,
-                lerp(g1, g2, local_t) as u8,
-                lerp(b1, b2, local_t) as u8,
+                lerp(r1 as f32, r2 as f32, local_t) as u8,
+                lerp(g1 as f32, g2 as f32, local_t) as u8,
+                lerp(b1 as f32, b2 as f32, local_t) as u8,
             );
         }
     }
 
     // 超出范围则返回最后一个颜色
-    let (_, r, g, b) = GRADIENT_STOPS[GRADIENT_STOPS.len() - 1];
-    (r as u8, g as u8, b as u8)
+    let (_, r, g, b) = ORIGINAL_GRADIENT_STOPS[ORIGINAL_GRADIENT_STOPS.len() - 1];
+    (r, g, b)
 }
 
-// 轻度抗锯齿
-fn bilinear_antialiasing(pixels: &[u8], width: u32, height: u32) -> Vec<u8> {
+// SMAA (Subpixel Morphological Anti-Aliasing) 实现
+fn smaa_antialiasing(pixels: &[u8], width: u32, height: u32) -> Vec<u8> {
+    // 第一步：边缘检测
+    let edges = smaa_edge_detection(pixels, width, height);
+
+    // 第二步：混合权重计算
+    let blend_weights = smaa_blend_weights(&edges, width, height);
+
+    // 第三步：邻域混合
+    smaa_neighborhood_blending(pixels, &blend_weights, width, height)
+}
+
+// SMAA 第一步：使用Sobel算子进行边缘检测
+fn smaa_edge_detection(pixels: &[u8], width: u32, height: u32) -> Vec<f32> {
+    let sobel_x = sobel_x_kernel();
+    let sobel_y = sobel_y_kernel();
+
+    let gx = convolve_ndarray(pixels, width, height, &sobel_x);
+    let gy = convolve_ndarray(pixels, width, height, &sobel_y);
+
+    let mut edges = vec![0.0f32; (width * height) as usize];
+    for i in 0..edges.len() {
+        let gx_val = gx[i] as f32;
+        let gy_val = gy[i] as f32;
+        // 计算梯度幅值
+        edges[i] = (gx_val * gx_val + gy_val * gy_val).sqrt();
+    }
+
+    edges
+}
+
+// SMAA 第二步：计算混合权重
+fn smaa_blend_weights(edges: &[f32], width: u32, height: u32) -> Vec<f32> {
+    let mut weights = vec![0.0f32; (width * height) as usize];
+    let threshold = 20.0; // 边缘阈值
+
+    for y in 1..(height - 1) {
+        for x in 1..(width - 1) {
+            let idx = (y * width + x) as usize;
+            let edge_strength = edges[idx];
+
+            if edge_strength > threshold {
+                // 计算局部边缘模式
+                let mut pattern_weight = 0.0;
+                let mut count = 0.0;
+
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let ny = (y as i32 + dy) as u32;
+                        let nx = (x as i32 + dx) as u32;
+                        let nidx = (ny * width + nx) as usize;
+
+                        if edges[nidx] > threshold {
+                            let dist = ((dx * dx + dy * dy) as f32).sqrt();
+                            let weight = 1.0 / (1.0 + dist);
+                            pattern_weight += weight;
+                            count += 1.0;
+                        }
+                    }
+                }
+
+                // 归一化权重
+                weights[idx] = if count > 0.0 {
+                    (pattern_weight / count).min(1.0)
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+
+    weights
+}
+
+// SMAA 第三步：邻域混合
+fn smaa_neighborhood_blending(pixels: &[u8], weights: &[f32], width: u32, height: u32) -> Vec<u8> {
     let mut output = vec![0u8; (width * height) as usize];
 
     for y in 0..height {
         for x in 0..width {
-            if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
-                output[(y * width + x) as usize] = pixels[(y * width + x) as usize];
-                continue;
-            }
-
             let idx = (y * width + x) as usize;
-            let center = pixels[idx] as f32;
+            let weight = weights[idx];
 
-            let top = pixels[((y - 1) * width + x) as usize] as f32;
-            let bottom = pixels[((y + 1) * width + x) as usize] as f32;
-            let left = pixels[(y * width + x - 1) as usize] as f32;
-            let right = pixels[(y * width + x + 1) as usize] as f32;
+            if weight < 0.01 {
+                output[idx] = pixels[idx];
+            } else {
+                // 使用双线性插值进行亚像素混合
+                let mut sum = pixels[idx] as f32 * (1.0 - weight);
+                let mut total_weight = 1.0 - weight;
 
-            let max_diff = (center - top)
-                .abs()
-                .max((center - bottom).abs())
-                .max((center - left).abs())
-                .max((center - right).abs());
-
-            if max_diff > 30.0 {
-                let mut sum = center * 4.0;
-                let mut weight_sum = 4.0;
-
+                // 采样周围像素
                 for dy in -1..=1 {
                     for dx in -1..=1 {
                         if dx == 0 && dy == 0 {
                             continue;
                         }
+
                         let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
                         let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
-                        let val = pixels[(ny * width + nx) as usize] as f32;
+                        let nidx = (ny * width + nx) as usize;
 
-                        let weight = if dx.abs() + dy.abs() == 2 { 0.5 } else { 1.0 };
+                        let dist = ((dx * dx + dy * dy) as f32).sqrt();
+                        let sample_weight = weight / (1.0 + dist * 2.0);
 
-                        sum += val * weight;
-                        weight_sum += weight;
+                        sum += pixels[nidx] as f32 * sample_weight;
+                        total_weight += sample_weight;
                     }
                 }
 
-                output[idx] = (sum / weight_sum).clamp(0.0, 255.0) as u8;
-            } else {
-                output[idx] = center as u8;
+                output[idx] = (sum / total_weight).clamp(0.0, 255.0) as u8;
             }
         }
     }
@@ -257,8 +361,8 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
 
     // 3. 去噪 - 使用高斯滤波保留更多边缘细节
     if denoise {
-        let kernel = gaussian_kernel(3, 0.8);
-        gray = convolve_y(&gray, width, height, &kernel);
+        let kernel = gaussian_kernel_ndarray(3, 0.8);
+        gray = convolve_ndarray(&gray, width, height, &kernel);
     }
 
     // 4. 卷积
@@ -287,10 +391,11 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 6. 轻度抗锯齿 - 只平滑极端边缘
-    processed = bilinear_antialiasing(&processed, width, height);
+    // 6. SMAA抗锯齿 - 高质量形态学抗锯齿
+    processed = smaa_antialiasing(&processed, width, height);
 
-    processed = unsharp_mask(&processed, width, height, 1.2, 0.9);
+    // 7. 适度锐化 - 保持细节清晰
+    processed = unsharp_mask(&processed, width, height, 1.0, 0.9);
 
     // 8. 生成最终RGBA图像
     let mut rgba = RgbaImage::new(width, height);
