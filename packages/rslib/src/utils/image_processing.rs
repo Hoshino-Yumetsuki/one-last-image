@@ -3,6 +3,7 @@ use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ColorType, DynamicImage, GenericImageView, Rgba, RgbaImage};
 use ndarray::Array2;
+use rayon::prelude::*;
 
 fn load_image(input: &[u8]) -> Option<DynamicImage> {
     image::load_from_memory(input).ok()
@@ -19,29 +20,35 @@ fn encode_png(rgba: &RgbaImage) -> Option<Vec<u8>> {
     }
 }
 
-// 使用ndarray进行卷积运算
+// 使用ndarray进行卷积运算（并行优化版本）
 fn convolve_ndarray(pixels: &[u8], width: u32, height: u32, kernel: &Array2<f32>) -> Vec<u8> {
     let (kh, kw) = kernel.dim();
     let half_h = kh / 2;
     let half_w = kw / 2;
-    let mut output = vec![0u8; (width * height) as usize];
 
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = 0.0;
-            for ky in 0..kh {
-                for kx in 0..kw {
-                    let py =
-                        (y as i32 + ky as i32 - half_h as i32).clamp(0, height as i32 - 1) as u32;
-                    let px =
-                        (x as i32 + kx as i32 - half_w as i32).clamp(0, width as i32 - 1) as u32;
-                    let idx = (py * width + px) as usize;
-                    sum += pixels[idx] as f32 * kernel[[ky, kx]];
+    // 使用并行迭代器处理每一行
+    let output: Vec<u8> = (0..height)
+        .into_par_iter()
+        .flat_map(|y| {
+            let mut row = vec![0u8; width as usize];
+            for x in 0..width {
+                let mut sum = 0.0;
+                for ky in 0..kh {
+                    for kx in 0..kw {
+                        let py = (y as i32 + ky as i32 - half_h as i32).clamp(0, height as i32 - 1)
+                            as u32;
+                        let px = (x as i32 + kx as i32 - half_w as i32).clamp(0, width as i32 - 1)
+                            as u32;
+                        let idx = (py * width + px) as usize;
+                        sum += pixels[idx] as f32 * kernel[[ky, kx]];
+                    }
                 }
+                row[x as usize] = sum.clamp(0.0, 255.0) as u8;
             }
-            output[(y * width + x) as usize] = sum.clamp(0.0, 255.0) as u8;
-        }
-    }
+            row
+        })
+        .collect();
+
     output
 }
 
@@ -182,99 +189,117 @@ fn smaa_edge_detection(pixels: &[u8], width: u32, height: u32) -> Vec<f32> {
     let gx = convolve_ndarray(pixels, width, height, &sobel_x);
     let gy = convolve_ndarray(pixels, width, height, &sobel_y);
 
-    let mut edges = vec![0.0f32; (width * height) as usize];
-    for i in 0..edges.len() {
-        let gx_val = gx[i] as f32;
-        let gy_val = gy[i] as f32;
-        // 计算梯度幅值
-        edges[i] = (gx_val * gx_val + gy_val * gy_val).sqrt();
-    }
+    // 并行计算梯度幅值
+    let edges: Vec<f32> = gx
+        .par_iter()
+        .zip(gy.par_iter())
+        .map(|(&gx_val, &gy_val)| {
+            let gx_f = gx_val as f32;
+            let gy_f = gy_val as f32;
+            (gx_f * gx_f + gy_f * gy_f).sqrt()
+        })
+        .collect();
 
     edges
 }
 
 // SMAA 第二步：计算混合权重
 fn smaa_blend_weights(edges: &[f32], width: u32, height: u32) -> Vec<f32> {
-    let mut weights = vec![0.0f32; (width * height) as usize];
     let threshold = 20.0; // 边缘阈值
 
-    for y in 1..(height - 1) {
-        for x in 1..(width - 1) {
-            let idx = (y * width + x) as usize;
-            let edge_strength = edges[idx];
+    // 并行处理每一行
+    let weights: Vec<f32> = (1..(height - 1))
+        .into_par_iter()
+        .flat_map(|y| {
+            let mut row = vec![0.0f32; width as usize];
 
-            if edge_strength > threshold {
-                // 计算局部边缘模式
-                let mut pattern_weight = 0.0;
-                let mut count = 0.0;
+            for x in 1..(width - 1) {
+                let idx = (y * width + x) as usize;
+                let edge_strength = edges[idx];
 
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        let ny = (y as i32 + dy) as u32;
-                        let nx = (x as i32 + dx) as u32;
-                        let nidx = (ny * width + nx) as usize;
+                if edge_strength > threshold {
+                    // 计算局部边缘模式
+                    let mut pattern_weight = 0.0;
+                    let mut count = 0.0;
 
-                        if edges[nidx] > threshold {
-                            let dist = ((dx * dx + dy * dy) as f32).sqrt();
-                            let weight = 1.0 / (1.0 + dist);
-                            pattern_weight += weight;
-                            count += 1.0;
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let ny = (y as i32 + dy) as u32;
+                            let nx = (x as i32 + dx) as u32;
+                            let nidx = (ny * width + nx) as usize;
+
+                            if edges[nidx] > threshold {
+                                let dist = ((dx * dx + dy * dy) as f32).sqrt();
+                                let weight = 1.0 / (1.0 + dist);
+                                pattern_weight += weight;
+                                count += 1.0;
+                            }
                         }
                     }
+
+                    // 归一化权重
+                    row[x as usize] = if count > 0.0 {
+                        (pattern_weight / count).min(1.0)
+                    } else {
+                        0.0
+                    };
                 }
-
-                // 归一化权重
-                weights[idx] = if count > 0.0 {
-                    (pattern_weight / count).min(1.0)
-                } else {
-                    0.0
-                };
             }
-        }
-    }
+            row
+        })
+        .collect();
 
-    weights
+    // 添加首尾行（全零）
+    let mut result = vec![0.0f32; width as usize];
+    result.extend(weights);
+    result.extend(vec![0.0f32; width as usize]);
+    result
 }
 
 // SMAA 第三步：邻域混合
 fn smaa_neighborhood_blending(pixels: &[u8], weights: &[f32], width: u32, height: u32) -> Vec<u8> {
-    let mut output = vec![0u8; (width * height) as usize];
+    // 并行处理每一行
+    let output: Vec<u8> = (0..height)
+        .into_par_iter()
+        .flat_map(|y| {
+            let mut row = vec![0u8; width as usize];
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) as usize;
-            let weight = weights[idx];
+            for x in 0..width {
+                let idx = (y * width + x) as usize;
+                let weight = weights[idx];
 
-            if weight < 0.01 {
-                output[idx] = pixels[idx];
-            } else {
-                // 使用双线性插值进行亚像素混合
-                let mut sum = pixels[idx] as f32 * (1.0 - weight);
-                let mut total_weight = 1.0 - weight;
+                if weight < 0.01 {
+                    row[x as usize] = pixels[idx];
+                } else {
+                    // 使用双线性插值进行亚像素混合
+                    let mut sum = pixels[idx] as f32 * (1.0 - weight);
+                    let mut total_weight = 1.0 - weight;
 
-                // 采样周围像素
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        if dx == 0 && dy == 0 {
-                            continue;
+                    // 采样周围像素
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+
+                            let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                            let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                            let nidx = (ny * width + nx) as usize;
+
+                            let dist = ((dx * dx + dy * dy) as f32).sqrt();
+                            let sample_weight = weight / (1.0 + dist * 2.0);
+
+                            sum += pixels[nidx] as f32 * sample_weight;
+                            total_weight += sample_weight;
                         }
-
-                        let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
-                        let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
-                        let nidx = (ny * width + nx) as usize;
-
-                        let dist = ((dx * dx + dy * dy) as f32).sqrt();
-                        let sample_weight = weight / (1.0 + dist * 2.0);
-
-                        sum += pixels[nidx] as f32 * sample_weight;
-                        total_weight += sample_weight;
                     }
-                }
 
-                output[idx] = (sum / total_weight).clamp(0.0, 255.0) as u8;
+                    row[x as usize] = (sum / total_weight).clamp(0.0, 255.0) as u8;
+                }
             }
-        }
-    }
+            row
+        })
+        .collect();
 
     output
 }
