@@ -120,6 +120,61 @@ fn get_gradient_color(t: f32) -> (u8, u8, u8) {
     (r as u8, g as u8, b as u8)
 }
 
+// 轻度抗锯齿
+fn bilinear_antialiasing(pixels: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut output = vec![0u8; (width * height) as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
+                output[(y * width + x) as usize] = pixels[(y * width + x) as usize];
+                continue;
+            }
+
+            let idx = (y * width + x) as usize;
+            let center = pixels[idx] as f32;
+
+            let top = pixels[((y - 1) * width + x) as usize] as f32;
+            let bottom = pixels[((y + 1) * width + x) as usize] as f32;
+            let left = pixels[(y * width + x - 1) as usize] as f32;
+            let right = pixels[(y * width + x + 1) as usize] as f32;
+
+            let max_diff = (center - top)
+                .abs()
+                .max((center - bottom).abs())
+                .max((center - left).abs())
+                .max((center - right).abs());
+
+            if max_diff > 30.0 {
+                let mut sum = center * 4.0;
+                let mut weight_sum = 4.0;
+
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                        let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                        let val = pixels[(ny * width + nx) as usize] as f32;
+
+                        let weight = if dx.abs() + dy.abs() == 2 { 0.5 } else { 1.0 };
+
+                        sum += val * weight;
+                        weight_sum += weight;
+                    }
+                }
+
+                output[idx] = (sum / weight_sum).clamp(0.0, 255.0) as u8;
+            } else {
+                output[idx] = center as u8;
+            }
+        }
+    }
+
+    output
+}
+
 // 获取卷积核
 fn get_kernel(quality: &str) -> Option<Vec<f32>> {
     match quality {
@@ -170,15 +225,10 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
     let watermark = config.as_ref().and_then(|c| c.watermark).unwrap_or(true);
     let hajimei = config.as_ref().and_then(|c| c.hajimei).unwrap_or(false);
 
-    // 计算尺寸
+    // 计算尺寸 - 直接使用原始分辨率，不做限制
     let (ori_w, ori_h) = img.dimensions();
-    let mut width = (ori_w as f32 / zoom).round() as u32;
-    let mut height = (ori_h as f32 / zoom).round() as u32;
-
-    if width > 1920 {
-        height = (height as f32 * 1920.0 / width as f32) as u32;
-        width = 1920;
-    }
+    let width = (ori_w as f32 / zoom).round() as u32;
+    let height = (ori_h as f32 / zoom).round() as u32;
 
     // 缩放图片 - 使用Lanczos3获得更锐利的边缘
     let resized =
@@ -237,11 +287,12 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 6. 锐化边缘 - 使用Unsharp Mask增强边缘对比度
-    // amount: 锐化强度, radius: 锐化半径
-    processed = unsharp_mask(&processed, width, height, 1.5, 1.0);
+    // 6. 轻度抗锯齿 - 只平滑极端边缘
+    processed = bilinear_antialiasing(&processed, width, height);
 
-    // 7. 生成最终RGBA图像
+    processed = unsharp_mask(&processed, width, height, 1.2, 0.9);
+
+    // 8. 生成最终RGBA图像
     let mut rgba = RgbaImage::new(width, height);
 
     if kiss {
@@ -272,7 +323,7 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 8. 白色背景合成
+    // 9. 白色背景合成
     let mut final_img = RgbaImage::new(width, height);
     for y in 0..height {
         for x in 0..width {
@@ -288,7 +339,7 @@ pub fn one_last_image_with_config(input: &[u8], config: Option<crate::OLIConfig>
         }
     }
 
-    // 9. 水印（在白色背景合成之后）
+    // 10. 水印（在白色背景合成之后）
     if watermark {
         if let Some(cfg) = &config {
             if let Some(wm_b64) = cfg.watermark_image.as_ref() {
